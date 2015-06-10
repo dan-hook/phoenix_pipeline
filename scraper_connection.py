@@ -4,9 +4,11 @@ import utilities
 import datetime
 import logging
 import codecs
+from elasticsearch import Elasticsearch
+from elasticsearch_dsl import Search
 
 
-def query_all(collection, lt_date, gt_date, sources, write_file=False):
+def query_all(collection, lt_date, gt_date, sources, elasticsearch, index, write_file=False):
     """
     Function to query the MongoDB instance and obtain results for the desired
     date range. The query constructed is: greater_than_date > results
@@ -51,34 +53,52 @@ def query_all(collection, lt_date, gt_date, sources, write_file=False):
 
     logger = logging.getLogger('pipeline_log')
     final_out = ''
-    if write_file:
-        output = []
-        sent_detector = nltk.data.load('tokenizers/punkt/english.pickle')
-        posts = collection.find({"$and": [{"date_added": {"$lt": lt_date}},
+    if not elasticsearch:
+        # Using elasticsearch and writing the file are incompatible at this time
+        if write_file:
+            output = []
+            #sent_detector = nltk.data.load('tokenizers/punkt/english.pickle')
+            posts = collection.find({"$and": [{"date_added": {"$lt": lt_date}},
+                                              {"date_added": {"$gt": gt_date}},
+                                              {"source": {"$in": sources}}]})
+            for num, post in enumerate(posts):
+                try:
+                    # print 'Processing entry {}...'.format(num)
+                    content = post['content'].encode('utf-8')
+                    if post['source'] == 'aljazeera':
+                        content = content.replace(
+                            """Caution iconAttention The browser or device you are using is out of date.  It has known security flaws and a limited feature set.  You will not see all the features of some websites.  Please update your browser.""",
+                            '')
+                    header = '  '.join(utilities.sentence_segmenter(content)[:4])
+                    string = '{}\t{}\t{}\n{}\n'.format(num, post['date'],
+                                                       post['url'], header)
+                    output.append(string)
+                except Exception as e:
+                    print('Error on entry {}: {}.'.format(num, e))
+            final_out = '\n'.join(output)
+
+        posts = collection.find({"$and": [{"date_added": {"$lte": lt_date}},
                                           {"date_added": {"$gt": gt_date}},
                                           {"source": {"$in": sources}}]})
-        for num, post in enumerate(posts):
-            try:
-                #print 'Processing entry {}...'.format(num)
-                content = post['content'].encode('utf-8')
-                if post['source'] == 'aljazeera':
-                    content = content.replace("""Caution iconAttention The browser or device you are using is out of date.  It has known security flaws and a limited feature set.  You will not see all the features of some websites.  Please update your browser.""", '')
-                header = '  '.join(utilities.sentence_segmenter(content)[:4])
-                string = '{}\t{}\t{}\n{}\n'.format(num, post['date'],
-                                                   post['url'], header)
-                output.append(string)
-            except Exception as e:
-                print('Error on entry {}: {}.'.format(num, e))
-        final_out = '\n'.join(output)
+    else:
+        # Do a date range query and filter out the documents where stanford = 1.
+        # It is questionable whether I should have the stanford=1 check here.  It is an error to be running the
+        # phoneix_pipeline on data that has not already been run through the stanford pipeline.
+        lt_time = lt_date.strftime('%Y-%m-%dT%X.%f%z')
+        gt_time = gt_date.strftime('%Y-%m-%dT%X.%f%z')
+        s = Search(using=collection, index=index, doc_type="news") \
+            .filter("range", published_date={"lt": lt_time, "gt": gt_time}) \
+            .filter("term", stanford=1)
+        posts = s.execute()
 
-    posts = collection.find({"$and": [{"date_added": {"$lte": lt_date}},
-                                      {"date_added": {"$gt": gt_date}},
-                                      {"source": {"$in": sources}}]})
+    if elasticsearch:
+        print('Total number of stories: {}'.format(posts.hits.total))
+        logger.info('Total number of stories: {}'.format(posts.hits.total))
+    else:
+        print('Total number of stories: {}'.format(posts.count()))
+        logger.info('Total number of stories: {}'.format(posts.count()))
 
-    print('Total number of stories: {}'.format(posts.count()))
-    logger.info('Total number of stories: {}'.format(posts.count()))
-
-    posts = list(posts)
+    posts = posts.hits if elasticsearch else list(posts)
 
     return posts, final_out
 
@@ -108,7 +128,7 @@ def _get_sources(filepath):
     return sources
 
 
-def main(current_date, file_details, write_file=False, file_stem=None):
+def main(process_date, file_details, write_file=False, file_stem=None):
     """
     Function to create a connection to a MongoDB instance, query for a given
     day's results, optionally write the results to a file, and return the
@@ -117,10 +137,10 @@ def main(current_date, file_details, write_file=False, file_stem=None):
     Parameters
     ----------
 
-    current_date: datetime object.
+    process_date: datetime object.
                     Date for which records are pulled. Normally this is
                     $date_running - 1. For example, if the script is running on
-                    the 25th, the current_date will be the 24th.
+                    the 25th, the process_date will be the 24th.
 
     file_details: Named tuple.
                     Tuple containing config information.
@@ -145,16 +165,17 @@ def main(current_date, file_details, write_file=False, file_stem=None):
 
     """
     sources = _get_sources('source_keys.txt')
-    conn = utilities.make_conn(file_details.auth_db, file_details.auth_user,
-                               file_details.auth_pass, file_details.db_host)
+    elasticsearch = file_details.elasticsearch
+    conn = Elasticsearch() if elasticsearch else utilities.make_conn(file_details.auth_db, file_details.auth_user,
+                                                                     file_details.auth_pass, file_details.db_host)
 
-    less_than = datetime.datetime(current_date.year, current_date.month,
-                                  current_date.day)
+    less_than = datetime.datetime(process_date.year, process_date.month,
+                                  process_date.day)
     greater_than = less_than - datetime.timedelta(days=1)
     less_than = less_than + datetime.timedelta(days=1)
 
-    results, text = query_all(conn, less_than, greater_than, sources,
-                              write_file=write_file)
+    results, text = query_all(conn, less_than, greater_than, sources,elasticsearch=elasticsearch,
+                              index=file_details.index, write_file=write_file)
 
     filename = ''
     if text:
@@ -162,9 +183,9 @@ def main(current_date, file_details, write_file=False, file_stem=None):
 
         if file_stem:
             filename = '{}{:02d}{:02d}{:02d}.txt'.format(file_stem,
-                                                         current_date.year,
-                                                         current_date.month,
-                                                         current_date.day)
+                                                         process_date.year,
+                                                         process_date.month,
+                                                         process_date.day)
             with codecs.open(filename, 'w', encoding='utf-8') as f:
                 f.write(text)
         else:

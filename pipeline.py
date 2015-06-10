@@ -11,6 +11,7 @@ import postprocess
 import oneaday_filter
 import result_formatter
 import scraper_connection
+import argparse
 from petrarch import petrarch
 
 
@@ -80,7 +81,6 @@ def main(file_details, server_details, logger_file=None, run_filter=None,
                                process_date, date_string)
 
     logger.info("Running PETRARCH")
-    file_details.fullfile_stem + date_string
     if run_filter == 'False':
         print('Running PETRARCH and writing to a file. No one-a-day.')
         logger.info('Running PETRARCH and writing to a file. No one-a-day.')
@@ -131,12 +131,23 @@ def main(file_details, server_details, logger_file=None, run_filter=None,
     print('PHOX.pipeline end:', datetime.datetime.utcnow())
 
 
-def run():
+def run(run_date,num_days):
+    #TODO: update config file to contain details for elasticsearch
     server_details, file_details = utilities.parse_config('PHOX_config.ini')
 
     main(file_details, server_details, file_details.log_file,
+         run_date=run_date,
          run_filter=file_details.oneaday_filter, version='v0.0.0')
 
 
 if __name__ == '__main__':
-    run()
+       # Grab command line options.
+    argumentParser = argparse.ArgumentParser(description='Grab run_date.')
+    argumentParser.add_argument('--run_date', type=str, default='',
+                        help='enter date in YYYYMMDD format')
+    argumentParser.add_argument('--num_days', type=int, default=1,
+                                help='number of days before run_date to query')
+    argumentParser.set_defaults(elasticsearch=False)
+    args = argumentParser.parse_args()
+
+    run(args.run_date,args.num_days)

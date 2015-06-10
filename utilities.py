@@ -64,6 +64,8 @@ def parse_config(config_filename):
         dupfile_stem = parser.get('Pipeline', 'dupfile_stem')
         outputfile_stem = parser.get('Pipeline', 'outputfile_stem')
         oneaday_filter = parser.get('Pipeline', 'oneaday_filter')
+        elasticsearch = parser.get('Pipeline', 'elasticsearch')
+        index = parser.get('Pipeline', 'index')
         if 'Auth' in parser.sections():
             auth_db = parser.get('Auth', 'auth_db')
             auth_user = parser.get('Auth', 'auth_user')
@@ -86,6 +88,8 @@ def parse_config(config_filename):
                                                    'dupfile_stem',
                                                    'outputfile_stem',
                                                    'oneaday_filter',
+                                                   'elasticsearch',
+                                                   'index',
                                                    'log_file',
                                                    'auth_db',
                                                    'auth_user',
@@ -94,7 +98,7 @@ def parse_config(config_filename):
 
         file_list = file_attrs(scraper_stem, recordfile_stem, fullfile_stem,
                                eventfile_stem, dupfile_stem, outputfile_stem,
-                               oneaday_filter, log_file, auth_db, auth_user,
+                               oneaday_filter, elasticsearch, index,log_file, auth_db, auth_user,
                                auth_pass, db_host)
 
         return server_list, file_list

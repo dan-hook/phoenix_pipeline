@@ -6,6 +6,7 @@ import datetime
 import utilities
 from dateutil import parser
 from collections import Counter
+from choose_content import choose_content
 
 
 def format_content(raw_content):
@@ -194,30 +195,50 @@ def main(results, file_details, process_date, thisday):
     sourcecount = Counter()
 
     new_results = []
-    for i, story in enumerate(list(results)):
-        content = story['content']
-        formatted_content = format_content(content)
-        story['content'] = ' '.join([sent for sent in formatted_content if
-                                     sent[0] != '"'])
+    elasticsearch = file_details.elasticsearch
+    if not elasticsearch:
+        for story in list(results):
+            content = story['content']
+            formatted_content = format_content(content)
+            story['content'] = ' '.join([sent for sent in formatted_content if
+                                         sent[0] != '"'])
 
-        try:
-            story['date'] = get_date(story, process_date)
-        except ValueError:
-            now = datetime.datetime.utcnow()
-            date = '{}{:02d}{:02d}'.format(str(now.year)[2:],
-                                           now.month, now.day)
-            story['date'] = date
+            try:
+                story['date'] = get_date(story, process_date)
+            except ValueError:
+                now = datetime.datetime.utcnow()
+                date = '{}{:02d}{:02d}'.format(str(now.year)[2:],
+                                               now.month, now.day)
+                story['date'] = date
 
-        source = story['source']
-        sourcecount[source] += 1
+            source = story['source']
+            sourcecount[source] += 1
 
-        new_results.append(story)
+            new_results.append(story)
+    else:
+        for hit in results:
+            content_type = choose_content(hit, 'content_boilerpipe', 'content_goose')
+            content = hit[content_type]
+            formatted_content = format_content(content)
+            hit['content'] = ' '.join([sent for sent in formatted_content if
+                                       sent[0] != '"'])
+            hit['date'] = hit['published_date']
+            hit['_id'] = hit.meta.id
+            #As best as I can determine, Petrarch requires these, but doesn't use them.
+            hit['date_added'] = hit['published_date']
+            hit['url'] = hit['article_url']
+
+            #TODO: When we add source to the documents, use source instead of domain
+            source = hit['domain']
+            #source = hit['source']
+            sourcecount[source] += 1
+            new_results.append(hit)
 
     source_counts_string = ''
     for source, count in sourcecount.items():
         source_counts_string += '{}\t{}'.format(source, count)
 
-#    with open(newsourcefile, 'w') as sauce:
-#        sauce.write(source_counts_string)
+    #    with open(newsourcefile, 'w') as sauce:
+    #        sauce.write(source_counts_string)
 
     return new_results
